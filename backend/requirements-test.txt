@@ -1,0 +1,4 @@
+pytest
+pytest-mock
+pydantic
+pytest-json-report

@@ -1,0 +1,24 @@
+# Environment variables
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+
+# Audio / Temp files
+*.wav
+*.mp3
+*.webm
+temp_*/
+temp_*.*
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.DS_Store

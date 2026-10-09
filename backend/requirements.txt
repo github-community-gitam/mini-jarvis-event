@@ -1,0 +1,14 @@
+groq
+python-dotenv
+requests
+keyboard
+sounddevice
+soundfile
+numpy
+pygame-ce
+fastapi[all]
+psycopg2-binary
+google-api-python-client
+google-auth-oauthlib
+pytz
+PyGithub
