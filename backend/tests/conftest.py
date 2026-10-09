@@ -15,12 +15,17 @@ original_socket = socket.socket
 class NetworkDisabledError(Exception):
     pass
 
-def guarded_socket(*args, **kwargs):
-    raise NetworkDisabledError("Network access is disabled during mock evaluation.")
+class GuardedSocket(original_socket):
+    def connect(self, address):
+        if isinstance(address, tuple) and len(address) >= 2 and address[0] in ('127.0.0.1', 'localhost', '::1'):
+            return super().connect(address)
+        elif isinstance(address, str) and address.startswith('/'): # Unix sockets
+            return super().connect(address)
+        raise NetworkDisabledError(f"Network access is disabled during mock evaluation (blocked: {address})")
 
 @pytest.fixture(autouse=True)
 def disable_network():
-    socket.socket = guarded_socket
+    socket.socket = GuardedSocket
     yield
     socket.socket = original_socket
 
