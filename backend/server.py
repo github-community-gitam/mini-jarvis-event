@@ -78,8 +78,6 @@ async def get_conversation(conversation_id: str):
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM conversations WHERE id = %s;", (conversation_id,))
             conv = cur.fetchone()
-            if not conv:
-                raise HTTPException(status_code=404, detail="Conversation not found")
             
         messages = memory.get_recent_messages(conversation_id, limit=100)
         return {"conversation": conv, "messages": messages}

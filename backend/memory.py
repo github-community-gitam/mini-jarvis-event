@@ -50,7 +50,7 @@ def get_recent_messages(conversation_id, limit=15):
                 (conversation_id, limit)
             )
             rows = cur.fetchall()
-            return list(reversed(rows))
+            return rows
     except Exception as e:
         print(f"\n[DB Error - Get Recent Messages]: {e}")
     finally:
