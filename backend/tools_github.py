@@ -1,3 +1,4 @@
+from tool_registry import safe_error, provider_call
 from github import Github
 from integrations import get_integration_token
 from tool_registry import registry
@@ -6,10 +7,13 @@ def get_github_client():
     token_data = get_integration_token("github")
     if not token_data:
         raise Exception("GitHub is not connected. Please connect it in the Integrations panel.")
-    return Github(token_data['access_token'])
+    return Github(token_data['access_token'], timeout=10, retry=0)
 
+@provider_call
 def list_repositories(limit: int = 10):
     """List repositories for the authenticated user"""
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError('limit must be between 1 and 50')
     try:
         g = get_github_client()
         user = g.get_user()
@@ -24,9 +28,10 @@ def list_repositories(limit: int = 10):
         if not result:
             return "No repositories found."
         return "\n".join(result)
-    except Exception as e:
-        return f"Error listing repositories: {str(e)}"
+    except Exception:
+        raise
 
+@provider_call
 def get_repository_info(repo_name: str):
     """Retrieve detailed information about a specific repository (e.g., 'ramkolipakula/mini-jarvis')"""
     try:
@@ -34,19 +39,22 @@ def get_repository_info(repo_name: str):
         repo = g.get_repo(repo_name)
         
         return f"Repository: {repo.full_name}\nDescription: {repo.description}\nStars: {repo.stargazers_count}\nForks: {repo.forks_count}\nLanguage: {repo.language}\nDefault Branch: {repo.default_branch}"
-    except Exception as e:
-        return f"Error fetching repository info: {str(e)}"
+    except Exception:
+        raise
 
+@provider_call
 def list_open_issues(repo_name: str, limit: int = 5):
     """List open issues for a specific repository"""
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError('limit must be between 1 and 50')
     try:
         g = get_github_client()
         repo = g.get_repo(repo_name)
         issues = repo.get_issues(state="open")
         
         result = []
-        for i, issue in enumerate(issues):
-            if i >= limit:
+        for issue in issues:
+            if len(result) >= limit:
                 break
             # get_issues returns pull requests as well in PyGithub, filter them out if needed
             if issue.pull_request is None:
@@ -55,11 +63,14 @@ def list_open_issues(repo_name: str, limit: int = 5):
         if not result:
             return f"No open issues found in {repo_name}."
         return "\n".join(result)
-    except Exception as e:
-        return f"Error listing issues: {str(e)}"
+    except Exception:
+        raise
 
+@provider_call
 def get_recent_commits(repo_name: str, branch: str = None, limit: int = 5):
     """Retrieve recent commits for a specific repository"""
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError('limit must be between 1 and 50')
     try:
         g = get_github_client()
         repo = g.get_repo(repo_name)
@@ -74,16 +85,23 @@ def get_recent_commits(repo_name: str, branch: str = None, limit: int = 5):
         for i, commit in enumerate(commits):
             if i >= limit:
                 break
-            result.append(f"- [{commit.sha[:7]}] {commit.commit.message.splitlines()[0]} (by {commit.commit.author.name})")
+            message = (getattr(commit.commit, 'message', '') or '').splitlines()
+            author = getattr(getattr(commit.commit, 'author', None), 'name', None) or 'Unknown author'
+            result.append(f"- [{commit.sha[:7]}] {message[0] if message else '(No message)'} (by {author})")
             
         if not result:
             return "No commits found."
         return "\n".join(result)
-    except Exception as e:
-        return f"Error fetching commits: {str(e)}"
+    except Exception:
+        raise
 
+@provider_call
 def list_pull_requests(repo_name: str, state: str = "open", limit: int = 5):
     """Summarize pull requests for a specific repository"""
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError('limit must be between 1 and 50')
+    if state not in ('open', 'closed', 'all'):
+        raise ValueError('state must be open, closed, or all')
     try:
         g = get_github_client()
         repo = g.get_repo(repo_name)
@@ -98,8 +116,8 @@ def list_pull_requests(repo_name: str, state: str = "open", limit: int = 5):
         if not result:
             return f"No {state} pull requests found in {repo_name}."
         return "\n".join(result)
-    except Exception as e:
-        return f"Error fetching pull requests: {str(e)}"
+    except Exception:
+        raise
 
 # Register Tools
 
@@ -116,7 +134,8 @@ registry.register(
         }
     },
     func=list_repositories,
-    requires_confirmation=False
+    requires_confirmation=False,
+    required_permissions="github"
 )
 
 registry.register(
@@ -133,7 +152,8 @@ registry.register(
         "required": ["repo_name"]
     },
     func=get_repository_info,
-    requires_confirmation=False
+    requires_confirmation=False,
+    required_permissions="github"
 )
 
 registry.register(
@@ -154,7 +174,8 @@ registry.register(
         "required": ["repo_name"]
     },
     func=list_open_issues,
-    requires_confirmation=False
+    requires_confirmation=False,
+    required_permissions="github"
 )
 
 registry.register(
@@ -179,7 +200,8 @@ registry.register(
         "required": ["repo_name"]
     },
     func=get_recent_commits,
-    requires_confirmation=False
+    requires_confirmation=False,
+    required_permissions="github"
 )
 
 registry.register(
@@ -204,5 +226,6 @@ registry.register(
         "required": ["repo_name"]
     },
     func=list_pull_requests,
-    requires_confirmation=False
+    requires_confirmation=False,
+    required_permissions="github"
 )

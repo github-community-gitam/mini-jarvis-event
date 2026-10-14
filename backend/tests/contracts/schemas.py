@@ -54,8 +54,8 @@ create_calendar_event_contract = ToolContract(
     input_schema=CreateCalendarEventInput,
     output_schema=CreateCalendarEventOutput,
     side_effects=True,
-    idempotent=True, # Should be idempotent based on some key, but typically API doesn't guarantee unless an idempotency key is passed
-    retryable=True
+    idempotent=False, # Approval consumption prevents replay; provider writes are never retried.
+    retryable=False
 )
 
 class ListCalendarEventsInput(BaseModel):

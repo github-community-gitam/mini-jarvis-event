@@ -43,7 +43,7 @@ def speak(text):
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
         
         if response.status_code == 200:
             # Save the audio file
@@ -64,7 +64,7 @@ def speak(text):
                 os.remove(OUTPUT_AUDIO_FILE)
         else:
             print(f"JARVIS (Text Only): {text}")
-            print(f"[TTS Error: {response.text}]")
+            print("[TTS Error: provider unavailable]")
     except Exception as e:
         print(f"JARVIS (Text Only): {text}")
         print(f"[Audio Playback Error: {e}]")
@@ -94,9 +94,9 @@ def generate_audio(text):
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
         if response.status_code == 200:
             return response.content
     except Exception as e:
-        print(f"[TTS Generation Error: {e}]")
+        print("[TTS Generation Error: provider unavailable]")
     return None

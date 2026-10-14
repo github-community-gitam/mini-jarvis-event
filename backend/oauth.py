@@ -1,149 +1,85 @@
+import hashlib
 import os
+from urllib.parse import urlencode
+import requests
 from google_auth_oauthlib.flow import Flow
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from integrations import save_integration_token, get_integration_token, remove_integration
+from actions import issue_record, consume_record
+from security import COOKIE
+from tool_registry import safe_error
 
 router = APIRouter()
+SCOPES = ['https://www.googleapis.com/auth/calendar.events',
+          'https://www.googleapis.com/auth/calendar.readonly',
+          'https://www.googleapis.com/auth/gmail.readonly',
+          'https://www.googleapis.com/auth/drive.readonly']
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
+def google_flow():
+    client_id, secret = os.getenv('GOOGLE_CLIENT_ID'), os.getenv('GOOGLE_CLIENT_SECRET')
+    if not client_id or not secret: raise HTTPException(503, 'Google OAuth is not configured')
+    return Flow.from_client_config({'web': {'client_id': client_id, 'client_secret': secret,
+        'auth_uri': 'https://accounts.google.com/o/oauth2/auth', 'token_uri': 'https://oauth2.googleapis.com/token'}},
+        scopes=SCOPES, redirect_uri=os.getenv('GOOGLE_REDIRECT_URI'))
 
-SCOPES = [
-    'https://www.googleapis.com/auth/calendar.events',
-    'https://www.googleapis.com/auth/calendar.readonly',
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.send',
-    'https://www.googleapis.com/auth/drive.readonly'
-]
+def binding(request):
+    return hashlib.sha256(request.cookies.get(COOKIE, '').encode()).hexdigest()
 
+@router.get('/api/auth/{provider}/login')
+def login(provider: str, request: Request):
+    if provider not in ('google', 'github'): raise HTTPException(404, 'Unknown integration')
+    if provider == 'google':
+        flow = google_flow()
+    elif not os.getenv('GITHUB_CLIENT_ID') or not os.getenv('GITHUB_CLIENT_SECRET'):
+        raise HTTPException(503, 'GitHub OAuth is not configured')
+    state = issue_record('oauth:' + provider, {}, binding(request))
+    if provider == 'google':
+        url, _ = flow.authorization_url(state=state, access_type='offline', include_granted_scopes='true', prompt='consent')
+    else:
+        # Public repository reads require no repo scope. Private reads are explicit opt-in.
+        scope = 'repo' if os.getenv('GITHUB_PRIVATE_REPOS') == 'true' else ''
+        url = 'https://github.com/login/oauth/authorize?' + urlencode({'client_id': os.getenv('GITHUB_CLIENT_ID'), 'state': state, 'scope': scope})
+    return RedirectResponse(url)
 
-def get_client_config():
-    return {
-        "web": {
-            "client_id": GOOGLE_CLIENT_ID,
-            "project_id": "mini-jarvis-project",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uris": [GOOGLE_REDIRECT_URI]
-        }
-    }
-
-@router.get("/api/auth/google/login")
-async def google_login():
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise HTTPException(status_code=500, detail="Google OAuth is not configured on the server.")
-        
-    flow = Flow.from_client_config(
-        get_client_config(),
-        scopes=SCOPES,
-        redirect_uri=GOOGLE_REDIRECT_URI
-    )
-    
-    authorization_url, state = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true',
-        prompt='consent'
-    )
-    
-    return RedirectResponse(url=authorization_url)
-
-@router.get("/api/auth/google/callback")
-async def google_callback(request: Request):
-    code = request.query_params.get("code")
-    if not code:
-        raise HTTPException(status_code=400, detail="No code provided")
-
-    flow = Flow.from_client_config(
-        get_client_config(),
-        scopes=SCOPES,
-        redirect_uri=GOOGLE_REDIRECT_URI
-    )
-    
+@router.get('/api/auth/{provider}/callback')
+def callback(provider: str, request: Request):
+    if provider not in ('google', 'github'): raise HTTPException(404, 'Unknown integration')
+    state = request.query_params.get('state')
+    if not state: raise HTTPException(400, 'Invalid OAuth state')
+    consume_record(state, 'oauth:' + provider, binding(request))
+    code = request.query_params.get('code')
+    if not code: raise HTTPException(400, 'Authorization was not completed')
     try:
-        flow.fetch_token(code=code)
-        credentials = flow.credentials
-        
-        save_integration_token(
-            "google",
-            credentials.token,
-            credentials.refresh_token,
-            credentials.expiry,
-            ",".join(SCOPES)
-        )
-        # Redirect back to the frontend
-        FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        return RedirectResponse(url=f"{FRONTEND_URL}/?integration=google&status=success")
-    except Exception as e:
-        print(f"OAuth Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        if provider == 'google':
+            flow = google_flow()
+            flow.fetch_token(code=code, timeout=10)
+            creds = flow.credentials
+            saved = save_integration_token('google', creds.token, creds.refresh_token, creds.expiry, ','.join(creds.granted_scopes or creds.scopes or []))
+        else:
+            res = requests.post('https://github.com/login/oauth/access_token', timeout=10,
+                headers={'Accept': 'application/json'}, json={'client_id': os.getenv('GITHUB_CLIENT_ID'),
+                'client_secret': os.getenv('GITHUB_CLIENT_SECRET'), 'code': code})
+            res.raise_for_status()
+            data = res.json()
+            if not isinstance(data, dict) or not isinstance(data.get('access_token'), str) or not data['access_token']:
+                raise ValueError('Missing access token')
+            saved = save_integration_token('github', data['access_token'], None, None, data.get('scope', ''))
+        if not saved: raise RuntimeError('Persistence failed')
+    except Exception as exc:
+        safe_error(exc)
+        raise HTTPException(502, 'Unable to connect integration. Please try again.') from None
+    frontend = os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+    return RedirectResponse(f'{frontend}/?integration={provider}&status=success')
 
-@router.get("/api/auth/google/status")
-async def google_status():
-    token_data = get_integration_token("google")
-    return {"connected": token_data is not None}
+@router.get('/api/auth/{provider}/status')
+def status(provider: str):
+    if provider not in ('google', 'github'): raise HTTPException(404, 'Unknown integration')
+    token = get_integration_token(provider)
+    return {'connected': bool(token and token.get('access_token'))}
 
-@router.delete("/api/auth/google/disconnect")
-async def google_disconnect():
-    success = remove_integration("google")
-    return {"status": "success" if success else "error"}
-
-
-# --- GitHub OAuth ---
-
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
-import requests
-
-@router.get("/api/auth/github/login")
-async def github_login():
-    if not GITHUB_CLIENT_ID:
-        raise HTTPException(status_code=500, detail="GitHub OAuth is not configured.")
-    
-    # Request 'repo' scope for access to repositories (GitHub OAuth doesn't have a read-only private repo scope)
-    github_auth_url = f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope=repo,read:user"
-    return RedirectResponse(url=github_auth_url)
-
-@router.get("/api/auth/github/callback")
-async def github_callback(request: Request):
-    code = request.query_params.get("code")
-    if not code:
-        raise HTTPException(status_code=400, detail="No code provided")
-        
-    token_url = "https://github.com/login/oauth/access_token"
-    headers = {"Accept": "application/json"}
-    payload = {
-        "client_id": GITHUB_CLIENT_ID,
-        "client_secret": GITHUB_CLIENT_SECRET,
-        "code": code
-    }
-    
-    try:
-        res = requests.post(token_url, json=payload, headers=headers)
-        data = res.json()
-        
-        if "access_token" not in data:
-            raise Exception(f"Failed to get access token: {data}")
-            
-        access_token = data["access_token"]
-        # Save token
-        save_integration_token("github", access_token, "", None, data.get("scope", ""))
-        
-        FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        return RedirectResponse(url=f"{FRONTEND_URL}/?integration=github&status=success")
-    except Exception as e:
-        print(f"GitHub OAuth Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/api/auth/github/status")
-async def github_status():
-    token_data = get_integration_token("github")
-    return {"connected": token_data is not None}
-
-@router.delete("/api/auth/github/disconnect")
-async def github_disconnect():
-    success = remove_integration("github")
-    return {"status": "success" if success else "error"}
+@router.delete('/api/auth/{provider}/disconnect')
+def disconnect(provider: str):
+    if provider not in ('google', 'github'): raise HTTPException(404, 'Unknown integration')
+    if not remove_integration(provider): raise HTTPException(503, 'Unable to disconnect')
+    return {'status': 'success'}

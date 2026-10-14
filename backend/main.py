@@ -25,12 +25,17 @@ import memory
 def main():
     print_header()
     
+    # CLI uses the same authenticated identity as the web app.
+    from getpass import getpass
+    from security import authenticate, owner_context
+    code = os.getenv('JARVIS_ACCESS_CODE') or getpass('Personal access code: ')
+    owner_context.set(authenticate(code))
     # Initialize conversation
     conversation_id = memory.create_conversation(title="Voice Session")
     if conversation_id:
         print(f"\n[Conversation Initialized: {conversation_id}]")
     else:
-        print("\n[Warning: Supabase not connected. Using local memory.]")
+        raise RuntimeError("Database unavailable")
     
     while True:
         try:
@@ -52,7 +57,14 @@ def main():
                 jarvis_response = command_response
             else:
                 # 4. Generate JARVIS AI response
-                jarvis_response = generate_response(user_text, conversation_id=conversation_id)
+                jarvis_response, tool_call = generate_response(user_text, conversation_id=conversation_id)
+                if tool_call:
+                    import json
+                    print(json.dumps(tool_call['arguments'], indent=2))
+                    approved = input('Approve this action? [y/N] ').strip().lower() == 'y'
+                    confirmation = {k: tool_call[k] for k in ('tool_name', 'arguments', 'action_id')}
+                    confirmation['approved'] = approved
+                    jarvis_response, _ = generate_response('', conversation_id=conversation_id, tool_execution=confirmation)
             
             print(f"\nJARVIS:\n{jarvis_response}\n")
             

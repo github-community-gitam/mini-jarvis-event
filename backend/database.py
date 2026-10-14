@@ -9,9 +9,9 @@ def get_db_connection():
     if not DATABASE_URL:
         return None
     try:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=5)
         conn.autocommit = True
         return conn
     except Exception as e:
-        print(f"[Database Connection Error]: {e}")
+        print("[Database Connection Error]: connection unavailable")
         return None
