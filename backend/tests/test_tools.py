@@ -6,7 +6,7 @@ import json
 
 def test_get_calendar_events():
     # The mock is pre-seeded with 2 events
-    result = list_events()
+    result = list_events(time_min="2026-10-01T00:00:00Z")
     assert "Mock Review" in result
     assert "Mock Dentist" in result
 
@@ -26,7 +26,7 @@ def test_provider_failure_handling():
     calendar_mock.set_failure("RATE_LIMIT_EXCEEDED")
     
     # The tool should catch this and return an error string
-    result = list_events()
+    result = list_events(time_min="2026-10-01T00:00:00Z")
     assert "RATE_LIMIT_EXCEEDED" in result or "Error" in result
 
 def test_github_repo_info():
@@ -38,4 +38,4 @@ def test_github_repo_info():
 def test_github_404_handling():
     result = get_repository_info("non-existent/repo")
     assert "Error" in result
-    assert "404" in result
+    assert "404" not in result  # Provider internals must not leak

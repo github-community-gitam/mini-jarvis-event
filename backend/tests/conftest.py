@@ -3,8 +3,6 @@ import socket
 import sys
 from unittest.mock import MagicMock
 
-# Mock database module to prevent loading psycopg2 during tests
-sys.modules['database'] = MagicMock()
 
 from tests.mocks.providers import calendar_mock, github_mock, gmail_mock, drive_mock
 
@@ -24,10 +22,10 @@ class GuardedSocket(original_socket):
         raise NetworkDisabledError(f"Network access is disabled during mock evaluation (blocked: {address})")
 
 @pytest.fixture(autouse=True)
-def disable_network():
-    socket.socket = GuardedSocket
-    yield
-    socket.socket = original_socket
+def disable_network(monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(socket, "socket", GuardedSocket)
+        yield
 
 @pytest.fixture(autouse=True)
 def reset_mocks():
@@ -41,7 +39,7 @@ def reset_mocks():
 @pytest.fixture(autouse=True)
 def patch_google_build(mocker):
     """Patch the googleapiclient build function to return our mocks"""
-    def fake_build(serviceName, version, credentials=None):
+    def fake_build(serviceName, version, credentials=None, **kwargs):
         if serviceName == 'calendar':
             return calendar_mock
         elif serviceName == 'gmail':
@@ -72,3 +70,7 @@ def mock_integration_token(mocker):
     mocker.patch('tools_gmail.get_integration_token', return_value=dummy_token)
     mocker.patch('tools_drive.get_integration_token', return_value=dummy_token)
 
+
+@pytest.fixture(autouse=True)
+def no_real_database(monkeypatch):
+    monkeypatch.setattr('memory.get_db_connection', lambda: None)

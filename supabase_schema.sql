@@ -4,7 +4,7 @@
 -- Create conversations table
 CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID, -- Optional, for future auth
+    user_id UUID, -- Legacy NULL owners are quarantined
     title TEXT NOT NULL DEFAULT 'New Conversation',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -41,6 +41,7 @@ EXECUTE FUNCTION update_updated_at_column();
 -- Create user_integrations table for OAuth tokens
 CREATE TABLE IF NOT EXISTS user_integrations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID,
     integration_name TEXT NOT NULL, -- 'google_calendar', 'github', etc.
     access_token TEXT,
     refresh_token TEXT,
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS user_integrations (
     scopes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(integration_name)
+    UNIQUE(user_id, integration_name)
 );
 
 CREATE OR REPLACE TRIGGER update_user_integrations_updated_at
