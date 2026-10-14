@@ -184,3 +184,68 @@ calendar_mock = MockCalendarService()
 github_mock = MockGithubClient()
 gmail_mock = MockGmailService()
 drive_mock = MockDriveService()
+# Automated Verification Tests for Issue #40
+def test_reset_clears_failures_latency_and_restores_state_after_success():
+    cal = MockCalendarService()
+
+    # Modify state via successful operation
+    cal.latency_ms = 150
+    inserted = cal.insert(
+        "primary",
+        {
+            "summary": "New Standup",
+            "start": {"dateTime": "2026-10-15T09:00:00Z"},
+        },
+    ).execute()
+
+    assert inserted["id"] == "evt_3"
+    assert cal.event_id_counter == 4
+    assert len(cal.state["events"]) == 3
+
+    # Perform Reset
+    cal.reset()
+
+    # Verify reset restoring default fixtures and values
+    assert cal.latency_ms == 0
+    assert cal.should_fail is False
+    assert cal.fail_reason is None
+    assert cal.event_id_counter == 3
+    assert len(cal.state["events"]) == 2
+    assert [e["id"] for e in cal.state["events"]] == ["evt_1", "evt_2"]
+
+
+def test_reset_clears_failures_and_state_after_failed_operation():
+    gh = MockGithubClient()
+
+    # Mutate state and trigger failure
+    gh.state["repos"]["mock-user/mock-repo"]["stargazers_count"] = 999
+    gh.latency_ms = 500
+    gh.set_failure("CUSTOM_API_DOWN")
+
+    # Verify error is raised
+    try:
+        gh.get_repo("mock-user/mock-repo")
+        assert False, "Should have raised exception"
+    except Exception as e:
+        assert "CUSTOM_API_DOWN" in str(e)
+
+    # Perform Reset
+    gh.reset()
+
+    # Verify reset after failed operation
+    assert gh.should_fail is False
+    assert gh.fail_reason is None
+    assert gh.latency_ms == 0
+    assert (
+        gh.state["repos"]["mock-user/mock-repo"]["stargazers_count"] == 42
+    )
+
+    # Ensure operation works cleanly after reset
+    repo = gh.get_repo("mock-user/mock-repo")
+    assert repo.stargazers_count == 42
+
+
+if __name__ == "__main__":
+    test_reset_clears_failures_latency_and_restores_state_after_success()
+    test_reset_clears_failures_and_state_after_failed_operation()
+    print("All mock reset verification tests passed successfully!")
